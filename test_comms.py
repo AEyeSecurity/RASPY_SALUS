@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - hardware specific
     GPIO = MockGPIO()
 
 SERIAL_PORT = os.environ.get("SALUS_SERIAL_PORT", "/dev/serial0")
-BAUDRATE = int(os.environ.get("SALUS_BAUDRATE", "115200"))
+BAUDRATE = int(os.environ.get("SALUS_BAUDRATE", "460800"))
 TIMEOUT_S = float(os.environ.get("SALUS_TIMEOUT_S", "0.001"))
 GPIO_RELAY = int(os.environ.get("SALUS_GPIO_RELAY", "17"))
 
