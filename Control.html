@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Control Cuadri</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background: #05070a;
+      color: #f5f5f5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .status-bar {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: #0b1018;
+      border-bottom: 1px solid #222834;
+      font-size: 13px;
+    }
+
+    .status-pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid #2d3848;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f39c12; /* amarillito: listo pero sin conectar */
+    }
+
+    .layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) 260px;
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .video-container {
+      position: relative;
+      background: #111722;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid #222834;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #videoFeed {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .hud-bottom {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 8px 12px;
+      background: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 13px;
+    }
+
+    .hud-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .hud-label {
+      opacity: 0.7;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .hud-value {
+      font-weight: 600;
+    }
+
+    .bar {
+      width: 160px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: #27ae60;
+    }
+
+    .aim-dot {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.9);
+      box-shadow: 0 0 6px rgba(0,0,0,0.8);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .sidebar {
+      background: #0b1018;
+      border-radius: 16px;
+      border: 1px solid #222834;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+    }
+
+    .sidebar h2 {
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .kmap {
+      background: #111722;
+      border-radius: 12px;
+      padding: 10px;
+      border: 1px solid #222834;
+    }
+
+    .kmap-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .kmap-key {
+      font-family: "SF Mono", Consolas, monospace;
+      background: #1a2231;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 12px;
+      margin-right: 4px;
+    }
+
+    .hint {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="status-bar">
+    <div class="status-pill">
+      <span class="status-dot" id="connectionDot"></span>
+      <span id="connectionText">Sin conexión</span>
+    </div>
+    <div>
+      Latencia: <span id="latencyValue">–</span> ms
+    </div>
+  </div>
+
+  <main class="layout">
+    <section id="videoContainer" class="video-container">
+      <!-- Acá va el video WebRTC más adelante -->
+      <video id="videoFeed" autoplay playsinline muted></video>
+
+      <!-- Punto de mira / referencia mouse -->
+      <div id="aimDot" class="aim-dot"></div>
+
+      <!-- HUD inferior -->
+      <div class="hud-bottom">
+        <div class="hud-group">
+          <div class="hud-label">Velocidad</div>
+          <div class="hud-value">
+            <span id="throttleText">0</span>
+          </div>
+          <div class="bar">
+            <div id="throttleBar" class="bar-fill"></div>
+          </div>
+        </div>
+
+        <div class="hud-group">
+          <div class="hud-label">Dirección</div>
+          <div class="hud-value">
+            <span id="steerText">0</span>
+          </div>
+        </div>
+
+        <div class="hud-group">
+          <div class="hud-label">Marcha</div>
+          <div class="hud-value" id="gearText">1</div>
+        </div>
+
+        <div class="hud-group">
+          <div class="hud-label">Freno</div>
+          <div class="hud-value" id="brakeText">OFF</div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div>
+        <h2>Controles</h2>
+        <div class="kmap">
+          <div class="kmap-row">
+            <span><span class="kmap-key">W</span> Acelerar</span>
+          </div>
+          <div class="kmap-row">
+            <span><span class="kmap-key">S</span> Retroceso / freno motor</span>
+          </div>
+          <div class="kmap-row">
+            <span><span class="kmap-key">A</span> Girar izquierda</span>
+          </div>
+          <div class="kmap-row">
+            <span><span class="kmap-key">D</span> Girar derecha</span>
+          </div>
+          <div class="kmap-row">
+            <span><span class="kmap-key">Espacio</span> Freno</span>
+          </div>
+          <div class="kmap-row">
+            <span><span class="kmap-key">Shift</span> Cambio de marcha</span>
+          </div>
+          <div class="kmap-row">
+            <span><span class="kmap-key">Mouse</span> Orientar cámara</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2>Tips</h2>
+        <p class="hint">
+          Hacé clic en la zona de video y mantené el foco para que el navegador capture las teclas.
+        </p>
+        <p class="hint">
+          El WebSocket se conecta a la Raspy en 192.168.1.42:8765 y manda comandos ~20 Hz.
+        </p>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // =========================
+    //  WebSocket a la Raspy
+    // =========================
+    const RASPI_HOST = "192.168.1.42";
+    const WS_PORT = 8765;
+    const WS_PATH = "/controls";
+
+    let socket = null;
+    let lastPingSent = 0;
+    const latencySpan = document.getElementById("latencyValue");
+    const dot = document.getElementById("connectionDot");
+    const connText = document.getElementById("connectionText");
+
+    function setupWebSocket() {
+      const host = RASPI_HOST; // si cambiás la IP de la Raspy, cambiás esto
+      const url = `ws://${host}:${WS_PORT}${WS_PATH}`;
+
+      console.log("Conectando WebSocket a", url);
+      socket = new WebSocket(url);
+
+      socket.onopen = () => {
+        console.log("WS conectado");
+        dot.style.background = "#2ecc71";
+        connText.textContent = "Conectado";
+      };
+
+      socket.onclose = () => {
+        console.log("WS desconectado");
+        dot.style.background = "#e74c3c";
+        connText.textContent = "Desconectado (reintentando...)";
+        setTimeout(setupWebSocket, 2000);
+      };
+
+      socket.onerror = (err) => {
+        console.error("WS error", err);
+        socket.close();
+      };
+
+      socket.onmessage = (event) => {
+        // Si quisieras hacer ping/pong o telemetría, podés procesarla acá.
+        // Por ahora lo dejamos vacío.
+      };
+    }
+
+    function sendCommand(command) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      try {
+        socket.send(JSON.stringify(command));
+      } catch (e) {
+        console.error("Error enviando comando", e);
+      }
+    }
+
+    setupWebSocket();
+
+    // =========================
+    //  Estado de control
+    // =========================
+    const keys = {
+      w: false,
+      s: false,
+      a: false,
+      d: false,
+      space: false,
+      shift: false,
+    };
+
+    const state = {
+      throttle: 0,   // -1..1
+      steer: 0,      // -1..1
+      brake: false,
+      gear: 1,
+      camX: 0,
+      camY: 0,
+    };
+
+    const videoContainer = document.getElementById('videoContainer');
+    const aimDot = document.getElementById('aimDot');
+
+    const throttleText = document.getElementById('throttleText');
+    const steerText = document.getElementById('steerText');
+    const gearText = document.getElementById('gearText');
+    const brakeText = document.getElementById('brakeText');
+    const throttleBar = document.getElementById('throttleBar');
+
+    // --- teclado ---
+    window.addEventListener('keydown', (e) => {
+      if (['KeyW','KeyA','KeyS','KeyD','Space','ShiftLeft','ShiftRight'].includes(e.code)) {
+        e.preventDefault();
+      }
+
+      switch (e.code) {
+        case 'KeyW':
+          keys.w = true;
+          break;
+        case 'KeyS':
+          keys.s = true;
+          break;
+        case 'KeyA':
+          keys.a = true;
+          break;
+        case 'KeyD':
+          keys.d = true;
+          break;
+        case 'Space':
+          keys.space = true;
+          break;
+        case 'ShiftLeft':
+        case 'ShiftRight':
+          if (!e.repeat) {
+            state.g
+
+ear = state.gear === 1 ? 2 : 1;
+          }
+          keys.shift = true;
+          break;
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      switch (e.code) {
+        case 'KeyW':
+          keys.w = false;
+          break;
+        case 'KeyS':
+          keys.s = false;
+          break;
+        case 'KeyA':
+          keys.a = false;
+          break;
+        case 'KeyD':
+          keys.d = false;
+          break;
+        case 'Space':
+          keys.space = false;
+          break;
+        case 'ShiftLeft':
+        case 'ShiftRight':
+          keys.shift = false;
+          break;
+      }
+    });
+
+    // --- mouse para orientar cámara ---
+    videoContainer.addEventListener('mousemove', (e) => {
+      const rect = videoContainer.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      aimDot.style.left = x + 'px';
+      aimDot.style.top = y + 'px';
+
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      let nx = (x - centerX) / centerX;
+      let ny = (y - centerY) / centerY;
+
+      nx = Math.max(-1, Math.min(1, nx));
+      ny = Math.max(-1, Math.min(1, ny));
+
+      state.camX = nx;
+      state.camY = -ny;
+    });
+
+    function updateControlState() {
+      const accelStep = 0.05;
+
+      // throttle
+      if (keys.w && !keys.s) {
+        state.throttle = Math.min(1, state.throttle + accelStep);
+      } else if (keys.s && !keys.w) {
+        state.throttle = Math.max(-1, state.throttle - accelStep);
+      } else {
+        if (state.throttle > 0) {
+          state.throttle = Math.max(0, state.throttle - accelStep);
+        } else if (state.throttle < 0) {
+          state.throttle = Math.min(0, state.throttle + accelStep);
+        }
+      }
+
+      // steering
+      if (keys.a && !keys.d) {
+        state.steer = -1;
+      } else if (keys.d && !keys.a) {
+        state.steer = 1;
+      } else {
+        state.steer = 0;
+      }
+
+      state.brake = keys.space;
+
+      const command = {
+        throttle: parseFloat(state.throttle.toFixed(2)),
+        steer: state.steer,
+        brake: state.brake,
+        gear: state.gear,
+        camX: parseFloat(state.camX.toFixed(2)),
+        camY: parseFloat(state.camY.toFixed(2)),
+      };
+
+      renderHud(command);
+      sendCommand(command);
+    }
+
+    function renderHud(cmd) {
+      throttleText.textContent = cmd.throttle.toFixed(2);
+      steerText.textContent = cmd.steer.toFixed(2);
+      gearText.textContent = cmd.gear;
+      brakeText.textContent = cmd.brake ? 'ON' : 'OFF';
+
+      const fillPercent = (cmd.throttle + 1) * 50; // -1..1 -> 0..100
+      throttleBar.style.width = fillPercent + '%';
+    }
+
+    setInterval(updateControlState, 50); // ~20 Hz
+  </script>
+</body>
+</html>
