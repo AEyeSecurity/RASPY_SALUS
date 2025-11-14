@@ -84,6 +84,15 @@ def apply_command_from_web(data: dict):
     # se sigue manejando igual que en test_comms.py / ESP32.
     # Acá solo mandamos accel negativo cuando throttle < 0.
 
+    print(
+        f"[CMD] throttle={throttle:.2f} "
+        f"-> accel={tester.targets.accel} | "
+        f"steer_norm={steer_norm:.2f} -> steer={tester.targets.steer} | "
+        f"brake={tester.targets.brake} | gear={gear}"
+    )
+
+
+
     last_command_time = time.time()
 
 
@@ -106,14 +115,12 @@ def tick_loop():
         tester.tick()  # esto maneja UART + GPIO + protocolo
         # test_comms.tick() ya hace sleep(0.001), así que no dormimos acá.
 
-
-async def handle_client(websocket, path):
+async def handle_client(websocket):
     """
-    Cada cliente WebSocket (tu navegador) entra por acá.
+    Cada cliente WebSocket (tu navegador) entra por ac�.
     """
     addr = websocket.remote_address
-    print(f"[WS-BRIDGE] Cliente conectado: {addr}, path={path}")
-
+    print(f"[WS-BRIDGE] Cliente conectado: {addr}")
     try:
         async for message in websocket:
             try:
@@ -123,6 +130,7 @@ async def handle_client(websocket, path):
                 continue
 
             apply_command_from_web(data)
+
     except websockets.ConnectionClosed:
         print(f"[WS-BRIDGE] Cliente desconectado: {addr}")
     except Exception as e:

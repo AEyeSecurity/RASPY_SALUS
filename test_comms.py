@@ -36,11 +36,37 @@ BAUDRATE = int(os.environ.get("SALUS_BAUDRATE", "460800"))
 TIMEOUT_S = float(os.environ.get("SALUS_TIMEOUT_S", "0.001"))
 GPIO_RELAY = int(os.environ.get("SALUS_GPIO_RELAY", "17"))
 
-try:
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(GPIO_RELAY, GPIO.OUT, initial=GPIO.LOW)
-except AttributeError:
-    pass
+GPIO_OFF_LIST = {GPIO_RELAY, 7, 8, 16, 24, 25}
+for token in os.environ.get("SALUS_GPIO_OFF_LIST", "").split(","):
+    token = token.strip()
+    if not token:
+        continue
+    try:
+        GPIO_OFF_LIST.add(int(token))
+    except ValueError:
+        continue
+
+
+def _set_all_gpio_low():
+    for pin in GPIO_OFF_LIST:
+        try:
+            GPIO.output(pin, GPIO.LOW)
+        except AttributeError:
+            return
+
+
+def initialize_gpio():
+    try:
+        GPIO.setmode(GPIO.BCM)
+        for pin in GPIO_OFF_LIST:
+            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+    except AttributeError:
+        pass
+    else:
+        _set_all_gpio_low()
+
+
+initialize_gpio()
 
 VER_MAJOR = 0x1
 FLAG_ESTOP = 0x01
@@ -168,7 +194,7 @@ class CommsTester:
         time.sleep(0.001)
 
     def close(self):
-        GPIO.output(GPIO_RELAY, GPIO.LOW)
+        _set_all_gpio_low()
         GPIO.cleanup()
         self.ser.close()
 
