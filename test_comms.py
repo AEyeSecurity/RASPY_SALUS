@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import serial
 from dataclasses import dataclass
 
@@ -36,6 +37,8 @@ BAUDRATE = int(os.environ.get("SALUS_BAUDRATE", "460800"))
 TIMEOUT_S = float(os.environ.get("SALUS_TIMEOUT_S", "0.001"))
 GPIO_RELAY = int(os.environ.get("SALUS_GPIO_RELAY", "8"))
 STATUS_TIMEOUT_S = float(os.environ.get("SALUS_STATUS_TIMEOUT_S", "0.5"))
+CMD_TX_PERIOD_S = 0.010  # 10 ms
+DIRECTION_CHANGE_DELAY_S = 2.0
 
 GPIO_OFF_LIST = {GPIO_RELAY, 7, 8, 16, 24, 25}
 for token in os.environ.get("SALUS_GPIO_OFF_LIST", "").split(","):
@@ -171,13 +174,19 @@ class CommsTester:
         self.status_timeout_logged = False
 
         self.rx = bytearray()
-        self.tx_period = 0.010  # 100 Hz
+        self.tx_period = CMD_TX_PERIOD_S  # 100 Hz
         self.next_tx = time.time()
 
         self.last_status_ts = 0.0
 
         # Garantizamos que el rele arranque apagado (GPIO bajo).
         self._update_relay_output(False)
+
+        self._accel_reverse_state = None
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._direction_block_until = 0.0
+        self._last_accel_sign = 1 if self.targets.accel > 0 else (-1 if self.targets.accel < 0 else 0)
 
         print("UART iniciado en", SERIAL_PORT, BAUDRATE, "baudios")
 
@@ -199,6 +208,76 @@ class CommsTester:
             except AttributeError:
                 # MockGPIO prints actions
                 GPIO.output(GPIO_RELAY, GPIO.HIGH if on else GPIO.LOW)
+
+    def _handle_negative_accel_reverse(self):
+        """
+        Si el operador pide accel<0 se fuerza el flag/relé de reversa para
+        entrar inmediatamente en marcha atrás, sin esperar pedido del ESP32.
+        Al volver a accel>=0 se restauran los estados previos.
+        """
+        accel_negative = self.targets.accel < 0
+        if accel_negative:
+            if self._accel_reverse_state is None:
+                self._accel_reverse_state = (
+                    self.allow_reverse,
+                    self.allow_reverse_manual,
+                    self.auto_grant_reverse,
+                    self.relay_state,
+                )
+                print("[REVERSE] accel<0 -> forzando reversa localmente")
+            self.allow_reverse = True
+            self.allow_reverse_manual = True
+            self.auto_grant_reverse = False
+            self._update_relay_output(True)
+        elif self._accel_reverse_state is not None:
+            (
+                prev_allow_reverse,
+                prev_allow_reverse_manual,
+                prev_auto_grant,
+                prev_relay,
+            ) = self._accel_reverse_state
+            self._accel_reverse_state = None
+            self.allow_reverse = prev_allow_reverse
+            self.allow_reverse_manual = prev_allow_reverse_manual
+            self.auto_grant_reverse = prev_auto_grant
+            self._update_relay_output(prev_relay)
+            print("[REVERSE] accel>=0 -> restaurando modo de reversa previo")
+
+    def _update_direction_change_block(self, now: float):
+        accel = self.targets.accel
+        if accel > 0:
+            sign = 1
+        elif accel < 0:
+            sign = -1
+        else:
+            sign = 0
+
+        if sign == 0:
+            self._direction_block_until = 0.0
+            self._last_accel_sign = 0
+            return False
+
+        if self._last_accel_sign == 0:
+            self._last_accel_sign = sign
+            return False
+
+        if sign != self._last_accel_sign:
+            self._direction_block_until = now + DIRECTION_CHANGE_DELAY_S
+            self._last_accel_sign = sign
+            print(
+                f"[DIR] Cambio de direccion -> esperando "
+                f"{DIRECTION_CHANGE_DELAY_S:.1f}s sin acelerar"
+            )
+            return True
+
+        if self._direction_block_until:
+            if now >= self._direction_block_until:
+                print("[DIR] Cambio de direccion habilitado.")
+                self._direction_block_until = 0.0
+            else:
+                return True
+
+        return False
 
     def _apply_reverse_policy(self):
         """
@@ -274,11 +353,14 @@ class CommsTester:
 
     def tick(self):
         now = time.time()
+        throttle_blocked = self._update_direction_change_block(now)
+        self._handle_negative_accel_reverse()
 
         # Transmit at fixed period. If ESTOP, override targets to safe values.
         if now >= self.next_tx:
             # If estop active, force brake=100 and accel=-100 and clear DRIVE_EN locally
-            send_accel = self.targets.accel
+            desired_accel = abs(self.targets.accel)
+            send_accel = desired_accel
             send_brake = self.targets.brake
             send_drive_enabled = self.drive_enabled
 
@@ -286,6 +368,12 @@ class CommsTester:
                 send_accel = -100
                 send_brake = 100
                 send_drive_enabled = False
+            else:
+                if throttle_blocked or desired_accel == 0:
+                    send_accel = 0
+                else:
+                    # Siempre enviamos magnitud positiva y delegamos el sentido al relé.
+                    send_accel = desired_accel
 
             # prepare flags
             flags = 0
@@ -352,6 +440,30 @@ class CommsTester:
         # small sleep to avoid pegging CPU; keeps responsiveness
         time.sleep(0.001)
 
+    def _run_loop(self):
+        while not self._stop_event.is_set():
+            self.tick()
+
+    def start_background_loop(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+        print("[LOOP] Envio continuo cada 10 ms INICIADO")
+
+    def loop_running(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def stop_background_loop(self):
+        if not (self._thread and self._thread.is_alive()):
+            return
+        self._stop_event.set()
+        self._thread.join(timeout=1.0)
+        self._thread = None
+        self._stop_event.clear()
+        print("[LOOP] Envio continuo DETENIDO")
+
     def _enforce_status_timeout(self, now: float):
         """
         Si no llegan estados válidos en STATUS_TIMEOUT_S se retorna a un estado
@@ -374,6 +486,7 @@ class CommsTester:
             self._update_relay_output(False)
 
     def close(self):
+        self.stop_background_loop()
         _set_all_gpio_low()
         GPIO.cleanup()
         try:
@@ -426,47 +539,45 @@ def read_int(prompt, default=0):
 
 def interactive_menu():
     tester = CommsTester()
+    tester.start_background_loop()
     try:
         while True:
             print("\n================ ESTADO ================")
             print(tester.describe())
             print(
-                "\nOpciones rapidas:\n"
-                "1) Ejecutar ciclo continuo (Ctrl+C para parar)\n"
-                "2) Ejecutar N ciclos (paso a paso)\n"
-                "3) Ajustar target steer (-100..100)\n"
-                "4) Ajustar target accel (-100..100)\n"
-                "5) Ajustar target brake (0..100)\n"
-                "6) Alternar Drive Enable\n"
-                "7) Gestionar reversa (AUTO/MANUAL)\n"
-                "8) Alternar E-Stop\n"
-                "9) Refrescar estado\n"
+                f"\nEnvio continuo: {'ON' if tester.loop_running() else 'OFF'} "
+                f"(periodo {CMD_TX_PERIOD_S*1000:.0f} ms)"
+            )
+            print(
+                "\nOpciones:\n"
+                "1) Ajustar target steer (-100..100)\n"
+                "2) Ajustar target accel (-100..100)\n"
+                "3) Ajustar target brake (0..100)\n"
+                "4) Alternar Drive Enable\n"
+                "5) Gestionar reversa (AUTO/MANUAL)\n"
+                "6) Alternar E-Stop\n"
+                "7) Pausar/Reanudar envio continuo\n"
+                "8) Refrescar estado\n"
                 "0) Salir\n"
             )
             choice = input("Selecciona una opcion y presiona Enter: ").strip().lower()
 
             if choice == "1":
-                print("Ejecutando... Ctrl+C para volver al menu.")
-                try:
-                    while True:
-                        tester.tick()
-                except KeyboardInterrupt:
-                    print("\nDetenido, regresando al menu.")
+                tester.targets.steer = read_int(
+                    "Nuevo steer (-100..100): ", tester.targets.steer
+                )
             elif choice == "2":
-                count = read_int("Cantidad de ciclos: ", default=0)
-                for _ in range(max(count, 0)):
-                    tester.tick()
-                print(f"Se ejecutaron {max(count, 0)} ciclos.")
+                tester.targets.accel = read_int(
+                    "Nuevo accel (-100..100): ", tester.targets.accel
+                )
             elif choice == "3":
-                tester.targets.steer = read_int("Nuevo steer (-100..100): ", tester.targets.steer)
+                tester.targets.brake = read_int(
+                    "Nuevo brake (0..100): ", tester.targets.brake
+                )
             elif choice == "4":
-                tester.targets.accel = read_int("Nuevo accel (-100..100): ", tester.targets.accel)
-            elif choice == "5":
-                tester.targets.brake = read_int("Nuevo brake (0..100): ", tester.targets.brake)
-            elif choice == "6":
                 tester.drive_enabled = not tester.drive_enabled
                 print("Drive enable ->", tester.drive_enabled)
-            elif choice == "7":
+            elif choice == "5":
                 if tester.allow_reverse_manual or not tester.auto_grant_reverse:
                     tester.allow_reverse_manual = False
                     tester.auto_grant_reverse = True
@@ -481,10 +592,15 @@ def interactive_menu():
                     # physical relay should reflect manual choice
                     tester._update_relay_output(tester.allow_reverse)
                     print("Allow reverse MANUAL ->", tester.allow_reverse)
-            elif choice == "8":
+            elif choice == "6":
                 tester.estop = not tester.estop
                 print("E-Stop ->", tester.estop)
-            elif choice == "9":
+            elif choice == "7":
+                if tester.loop_running():
+                    tester.stop_background_loop()
+                else:
+                    tester.start_background_loop()
+            elif choice == "8":
                 print(tester.describe())
             elif choice == "0":
                 break
