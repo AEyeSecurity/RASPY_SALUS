@@ -39,6 +39,7 @@ GPIO_RELAY = int(os.environ.get("SALUS_GPIO_RELAY", "8"))
 STATUS_TIMEOUT_S = float(os.environ.get("SALUS_STATUS_TIMEOUT_S", "0.5"))
 CMD_TX_PERIOD_S = 0.010  # 10 ms
 DIRECTION_CHANGE_DELAY_S = 2.0
+ACCEL_RAMP_TIME_S = 2.0  # tiempo para alcanzar el target en segundos
 
 GPIO_OFF_LIST = {GPIO_RELAY, 7, 8, 16, 24, 25}
 for token in os.environ.get("SALUS_GPIO_OFF_LIST", "").split(","):
@@ -128,7 +129,7 @@ def parse_status_packet(packet):
 @dataclass
 class TargetState:
     steer: int = 0
-    accel: int = 20
+    accel: int = 0
     brake: int = 0
 
 
@@ -178,11 +179,12 @@ class CommsTester:
         self.next_tx = time.time()
 
         self.last_status_ts = 0.0
+        self._ramp_value = 0.0
+        self._last_ramp_update = time.time()
 
         # Garantizamos que el rele arranque apagado (GPIO bajo).
         self._update_relay_output(False)
 
-        self._accel_reverse_state = None
         self._stop_event = threading.Event()
         self._thread = None
         self._direction_block_until = 0.0
@@ -190,11 +192,12 @@ class CommsTester:
 
         print("UART iniciado en", SERIAL_PORT, BAUDRATE, "baudios")
 
-    def _build_flags(self):
+    def _build_flags(self, drive_enabled=None):
         flags = 0
         if self.estop:
             flags |= FLAG_ESTOP
-        if self.drive_enabled:
+        use_drive = self.drive_enabled if drive_enabled is None else drive_enabled
+        if use_drive:
             flags |= FLAG_DRIVE_ENABLE
         if self.allow_reverse:
             flags |= FLAG_ALLOW_REVERSE
@@ -210,38 +213,34 @@ class CommsTester:
                 GPIO.output(GPIO_RELAY, GPIO.HIGH if on else GPIO.LOW)
 
     def _handle_negative_accel_reverse(self):
+        # Reversa ahora se habilita respondiendo a REVERSE_REQ de la ESP32.
+        return
+
+    def _apply_accel_ramp(self, target: int, now: float) -> int:
         """
-        Si el operador pide accel<0 se fuerza el flag/relé de reversa para
-        entrar inmediatamente en marcha atrás, sin esperar pedido del ESP32.
-        Al volver a accel>=0 se restauran los estados previos.
+        Rampa lineal: alcanza el target en ACCEL_RAMP_TIME_S desde el valor actual.
+        Evita tirones al cambiar de signo o magnitud.
         """
-        accel_negative = self.targets.accel < 0
-        if accel_negative:
-            if self._accel_reverse_state is None:
-                self._accel_reverse_state = (
-                    self.allow_reverse,
-                    self.allow_reverse_manual,
-                    self.auto_grant_reverse,
-                    self.relay_state,
-                )
-                print("[REVERSE] accel<0 -> forzando reversa localmente")
-            self.allow_reverse = True
-            self.allow_reverse_manual = True
-            self.auto_grant_reverse = False
-            self._update_relay_output(True)
-        elif self._accel_reverse_state is not None:
-            (
-                prev_allow_reverse,
-                prev_allow_reverse_manual,
-                prev_auto_grant,
-                prev_relay,
-            ) = self._accel_reverse_state
-            self._accel_reverse_state = None
-            self.allow_reverse = prev_allow_reverse
-            self.allow_reverse_manual = prev_allow_reverse_manual
-            self.auto_grant_reverse = prev_auto_grant
-            self._update_relay_output(prev_relay)
-            print("[REVERSE] accel>=0 -> restaurando modo de reversa previo")
+        if self._last_ramp_update is None:
+            self._last_ramp_update = now
+        dt = max(0.0, now - self._last_ramp_update)
+        self._last_ramp_update = now
+
+        current = self._ramp_value
+        diff = float(target) - current
+        if abs(diff) < 0.5 or ACCEL_RAMP_TIME_S <= 0.0:
+            self._ramp_value = float(target)
+            return int(round(self._ramp_value))
+
+        # Velocidad necesaria para llegar al target en el tiempo de rampa.
+        rate = abs(diff) / ACCEL_RAMP_TIME_S  # unidades por segundo
+        step = rate * dt
+        if step > abs(diff):
+            step = abs(diff)
+        self._ramp_value = current + (step if diff > 0 else -step)
+        # Limitar a rango válido [-100, 100]
+        self._ramp_value = max(-100.0, min(100.0, self._ramp_value))
+        return int(round(self._ramp_value))
 
     def _update_direction_change_block(self, now: float):
         accel = self.targets.accel
@@ -354,35 +353,57 @@ class CommsTester:
     def tick(self):
         now = time.time()
         throttle_blocked = self._update_direction_change_block(now)
-        self._handle_negative_accel_reverse()
 
-        # Transmit at fixed period. If ESTOP, override targets to safe values.
+        # Decide concesión de reversa: se habilita ALLOW cuando hay REVERSE_REQ
+        # o cuando el operador está pidiendo aceleración negativa, siempre que
+        # estemos en modo auto y no haya override manual.
+        reverse_requested = self.status.reverse_req or (self.targets.accel < 0)
+        if reverse_requested:
+            if self.auto_grant_reverse and not self.allow_reverse_manual:
+                if not self.allow_reverse:
+                    print(
+                        f"[REVERSE][AUTO] req={'ESP32' if self.status.reverse_req else 'accel<0'} "
+                        f"-> ALLOW_REVERSE=ON, relay=ON"
+                    )
+                self.allow_reverse = True
+                self._update_relay_output(True)
+            elif not self.auto_grant_reverse and not self.allow_reverse_manual:
+                print(
+                    f"[REVERSE][AUTO-OFF] req={'ESP32' if self.status.reverse_req else 'accel<0'} "
+                    "pero auto_grant_reverse=OFF; no se habilita"
+                )
+        else:
+            # Si ya no se solicita reversa y estamos en modo auto sin override,
+            # limpia ALLOW y baja el relé para evitar quedar pegados en reversa.
+            if self.auto_grant_reverse and not self.allow_reverse_manual and self.allow_reverse:
+                print("[REVERSE][AUTO] sin pedido -> ALLOW_REVERSE=OFF, relay=OFF")
+                self.allow_reverse = False
+                self._update_relay_output(False)
+
         if now >= self.next_tx:
-            # If estop active, force brake=100 and accel=-100 and clear DRIVE_EN locally
-            desired_accel = abs(self.targets.accel)
+            desired_accel = clamp(self.targets.accel, -100, 100)
+            # Se envía el valor con signo para que la ESP32 pueda procesar reversa real.
             send_accel = desired_accel
-            send_brake = self.targets.brake
+            send_brake = clamp(self.targets.brake, 0, 100)
             send_drive_enabled = self.drive_enabled
 
             if self.estop:
-                send_accel = -100
+                send_accel = 0
                 send_brake = 100
                 send_drive_enabled = False
+                # E-Stop corta la rampa inmediatamente.
+                self._ramp_value = 0.0
+                self._last_ramp_update = now
             else:
                 if throttle_blocked or desired_accel == 0:
                     send_accel = 0
-                else:
-                    # Siempre enviamos magnitud positiva y delegamos el sentido al relé.
-                    send_accel = desired_accel
+                if not send_drive_enabled:
+                    send_accel = 0
 
-            # prepare flags
-            flags = 0
-            if self.estop:
-                flags |= FLAG_ESTOP
-            if send_drive_enabled:
-                flags |= FLAG_DRIVE_ENABLE
-            if self.allow_reverse:
-                flags |= FLAG_ALLOW_REVERSE
+            # Aplicar rampa progresiva para evitar tirones mecánicos.
+            send_accel = self._apply_accel_ramp(send_accel, now)
+
+            flags = self._build_flags(drive_enabled=send_drive_enabled)
 
             pkt = build_cmd_packet(
                 self.targets.steer,
@@ -395,13 +416,12 @@ class CommsTester:
                 self.tx_count += 1
             except Exception as e:
                 print("Error escribiendo puerto serie:", e)
-            # schedule next send preserving period to avoid time drift accumulation
             self.next_tx += self.tx_period
             if self.next_tx < now:
-                # if we're behind, resync to now to avoid a long burst
                 self.next_tx = now + self.tx_period
 
         # Read incoming bytes non-blocking (timeout small)
+
         try:
             chunk = self.ser.read(64)
         except Exception as e:
@@ -481,8 +501,14 @@ class CommsTester:
                     "deshabilitando reversa"
                 )
                 self.status_timeout_logged = True
-            if self.auto_grant_reverse and not self.allow_reverse_manual:
-                self.allow_reverse = False
+            # Estado seguro: sin drive, con freno y reversa deshabilitada.
+            self.drive_enabled = False
+            self.allow_reverse = False
+            self.allow_reverse_manual = False
+            self.auto_grant_reverse = True
+            self.estop = True
+            self.targets.accel = 0
+            self.targets.brake = 100
             self._update_relay_output(False)
 
     def close(self):
