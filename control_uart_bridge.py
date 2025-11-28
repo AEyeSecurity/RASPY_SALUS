@@ -20,6 +20,8 @@ WS_HOST = "0.0.0.0"
 WS_PORT = 8765
 WS_PATH = "/controls"
 INACTIVITY_BRAKE_S = 0.4  # si el navegador deja de enviar >400 ms -> frena
+RESUME_MIN_INTERVAL_S = 0.25  # se libera failsafe cuando vuelven comandos >= ~4 Hz
+RESUME_HITS_REQUIRED = 2      # nA? comandos consecutivos rA?pidos para liberar
 
 tester = CommsTester()
 running = True
@@ -27,6 +29,8 @@ last_command_ts = 0.0
 _tick_thread = None
 _start_ts = time.time()
 _command_count = 0
+failsafe_active = False
+_resume_hits = 0
 
 def _clamp(value, lo, hi, default=0.0):
     try:
@@ -39,7 +43,7 @@ def apply_web_command(payload):
     """
     Convierte el JSON recibido en targets para CommsTester.
     """
-    global last_command_ts, _command_count
+    global last_command_ts, _command_count, failsafe_active, _resume_hits
 
     throttle = _clamp(payload.get("throttle"), -1.0, 1.0, 0.0)
     steer_norm = _clamp(payload.get("steer"), -1.0, 1.0, 0.0)
@@ -53,6 +57,34 @@ def apply_web_command(payload):
     accel_limit = 50 if gear <= 1 else 100
     accel_cmd = int(throttle * accel_limit)
     steer_cmd = int(steer_norm * 100)
+    now = time.time()
+    dt = (now - last_command_ts) if last_command_ts else None
+
+    # Si seguimos en failsafe, solo liberamos cuando llegan comandos
+    # consecutivos rA?pidos (evita loop ON/OFF cuando la pestaA�a estA? en segundo plano).
+    if failsafe_active:
+        if dt is not None and dt < RESUME_MIN_INTERVAL_S:
+            _resume_hits += 1
+        else:
+            _resume_hits = 0
+
+        if _resume_hits >= RESUME_HITS_REQUIRED:
+            failsafe_active = False
+            _resume_hits = 0
+            print("[WS] Failsafe liberado: comandos continuos recibidos")
+        else:
+            # Mantiene freno y drive off hasta que se cumpla la condiciA?n.
+            tester.targets.accel = 0
+            tester.targets.brake = 100
+            tester.drive_enabled = False
+            print("[WS] En failsafe (pestaA�a fuera de foco?). Esperando comandos continuos...")
+            last_command_ts = now
+            _command_count += 1
+            print(
+                f"[WS] #{_command_count} +{(now - _start_ts)*1000:.0f}ms | "
+                f"throttle={throttle:.2f} steer={steer_cmd}"
+            )
+            return
 
     if brake:
         tester.targets.accel = 0
@@ -65,7 +97,6 @@ def apply_web_command(payload):
     tester.drive_enabled = True  # cada comando reactiva el drive
 
     _command_count += 1
-    now = time.time()
     last_command_ts = now
 
     print(
@@ -78,15 +109,18 @@ def tick_loop():
     """
     Mantiene vivo CommsTester.tick() (100 Hz) y aplica failsafe por inactividad.
     """
-    global running
+    global running, failsafe_active
 
     print("[WS-BRIDGE] Loop de tick iniciado")
     while running:
         now = time.time()
         if last_command_ts and (now - last_command_ts) > INACTIVITY_BRAKE_S:
+            if not failsafe_active:
+                print("[WS] Inactividad > INACTIVITY_BRAKE_S -> freno + drive OFF")
             tester.targets.accel = 0
             tester.targets.brake = 100
             tester.drive_enabled = False
+            failsafe_active = True
 
         tester.tick()
 
