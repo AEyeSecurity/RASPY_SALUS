@@ -90,13 +90,30 @@ def tick_loop():
 
         tester.tick()
 
+def _get_ws_path(websocket):
+    """
+    Devuelve el path del handshake segun la version de websockets.
+    ServerConnection (API nueva) no tiene .path, pero expone .request.path.
+    """
+    path = getattr(websocket, "path", None)
+    if path:
+        return path
+    req = getattr(websocket, "request", None)
+    if req:
+        return getattr(req, "path", None) or getattr(req, "target", None)
+    return None
+
 async def handle_client(websocket):
     """
     Maneja un cliente WebSocket (Control.html).
     """
-    if websocket.path != WS_PATH:
+    path = _get_ws_path(websocket)
+    if path and path != WS_PATH:
+        print(f"[WS-BRIDGE] Path inesperado: {path} (esperado {WS_PATH}) -> cerrando")
         await websocket.close(code=4000, reason="Path no soportado")
         return
+    elif not path:
+        print("[WS-BRIDGE] Path no disponible (API websockets nueva); aceptando cliente")
 
     addr = websocket.remote_address
     print(f"[WS-BRIDGE] Cliente conectado: {addr}")
