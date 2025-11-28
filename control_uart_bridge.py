@@ -5,7 +5,7 @@ Puente WebSocket -> UART para Control.html.
 - Escucha en ws://0.0.0.0:8765/controls (ajusta WS_HOST/PORT si cambia la IP).
 - Recibe JSON con throttle (-1..1), steer (-1..1), brake (bool), gear (1/2).
 - Traduce a CommsTester (test_comms.py) para mandar por UART al vehiculo.
-- Freno de emergencia si no llega comando en INACTIVITY_BRAKE_S.
+- Corta acelerador y deshabilita drive si no llega comando en INACTIVITY_BRAKE_S.
 """
 import asyncio
 import json
@@ -19,7 +19,7 @@ from test_comms import CommsTester
 WS_HOST = "0.0.0.0"
 WS_PORT = 8765
 WS_PATH = "/controls"
-INACTIVITY_BRAKE_S = 0.4  # si el navegador deja de enviar >400 ms -> frena
+INACTIVITY_BRAKE_S = 0.4  # si el navegador deja de enviar >400 ms -> corta acel y deshabilita drive
 RESUME_MIN_INTERVAL_S = 0.25  # se libera failsafe cuando vuelven comandos >= ~4 Hz
 RESUME_HITS_REQUIRED = 2      # nA? comandos consecutivos rA?pidos para liberar
 
@@ -73,9 +73,9 @@ def apply_web_command(payload):
             _resume_hits = 0
             print("[WS] Failsafe liberado: comandos continuos recibidos")
         else:
-            # Mantiene freno y drive off hasta que se cumpla la condiciA?n.
+            # Mantiene drive off (sin freno) hasta que se cumpla la condiciA?n.
             tester.targets.accel = 0
-            tester.targets.brake = 100
+            tester.targets.brake = 0
             tester.drive_enabled = False
             print("[WS] En failsafe (pestaA�a fuera de foco?). Esperando comandos continuos...")
             last_command_ts = now
@@ -116,9 +116,9 @@ def tick_loop():
         now = time.time()
         if last_command_ts and (now - last_command_ts) > INACTIVITY_BRAKE_S:
             if not failsafe_active:
-                print("[WS] Inactividad > INACTIVITY_BRAKE_S -> freno + drive OFF")
+                print("[WS] Inactividad > INACTIVITY_BRAKE_S -> acel=0, drive OFF")
             tester.targets.accel = 0
-            tester.targets.brake = 100
+            tester.targets.brake = 0
             tester.drive_enabled = False
             failsafe_active = True
 
