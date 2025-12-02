@@ -258,7 +258,7 @@
           Hacé clic en la zona de video y mantené el foco para que el navegador capture las teclas.
         </p>
         <p class="hint">
-          El WebSocket se conecta a la Raspy en 192.168.1.42:8765 y manda comandos ~20 Hz.
+          El WebSocket se conecta a la Raspy en 100.107.79.45:8765 y manda comandos ~20 Hz.
         </p>
       </div>
     </aside>
@@ -268,9 +268,10 @@
     // =========================
     //  WebSocket a la Raspy
     // =========================
-    const RASPI_HOST = "192.168.1.108";
+    const RASPI_HOST = "100.107.79.45";
     const WS_PORT = 8765;
     const WS_PATH = "/controls";
+    const CAMERA_URL = "http://100.107.79.45:8889/camara";
 
     let socket = null;
     let lastPingSent = 0;
@@ -349,6 +350,8 @@
     const gearText = document.getElementById('gearText');
     const brakeText = document.getElementById('brakeText');
     const throttleBar = document.getElementById('throttleBar');
+    const videoFeedEl = document.getElementById('videoFeed');
+    videoFeedEl.src = CAMERA_URL;
 
     // --- teclado ---
     window.addEventListener('keydown', (e) => {
