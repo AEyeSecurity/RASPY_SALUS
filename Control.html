@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -130,6 +130,17 @@
       pointer-events: none;
     }
 
+    .cam-status {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      background: rgba(0,0,0,0.65);
+      border: 1px solid #2d3848;
+      font-size: 12px;
+    }
+
     .sidebar {
       background: #0b1018;
       border-radius: 16px;
@@ -178,17 +189,18 @@
   <div class="status-bar">
     <div class="status-pill">
       <span class="status-dot" id="connectionDot"></span>
-      <span id="connectionText">Sin conexión</span>
+      <span id="connectionText">Sin conexiÃ³n</span>
     </div>
     <div>
-      Latencia: <span id="latencyValue">–</span> ms
+      Latencia: <span id="latencyValue">â€“</span> ms
     </div>
   </div>
 
   <main class="layout">
     <section id="videoContainer" class="video-container">
-      <!-- Acá va el video WebRTC más adelante -->
+      <!-- AcÃ¡ va el video WebRTC mÃ¡s adelante -->
       <video id="videoFeed" autoplay playsinline muted></video>
+      <div id="camStatus" class="cam-status">Cam: iniciando...</div>
 
       <!-- Punto de mira / referencia mouse -->
       <div id="aimDot" class="aim-dot"></div>
@@ -206,7 +218,7 @@
         </div>
 
         <div class="hud-group">
-          <div class="hud-label">Dirección</div>
+          <div class="hud-label">DirecciÃ³n</div>
           <div class="hud-value">
             <span id="steerText">0</span>
           </div>
@@ -247,7 +259,7 @@
             <span><span class="kmap-key">Shift</span> Cambio de marcha</span>
           </div>
           <div class="kmap-row">
-            <span><span class="kmap-key">Mouse</span> Orientar cámara</span>
+            <span><span class="kmap-key">Mouse</span> Orientar cÃ¡mara</span>
           </div>
         </div>
       </div>
@@ -255,7 +267,7 @@
       <div>
         <h2>Tips</h2>
         <p class="hint">
-          Hacé clic en la zona de video y mantené el foco para que el navegador capture las teclas.
+          HacÃ© clic en la zona de video y mantenÃ© el foco para que el navegador capture las teclas.
         </p>
         <p class="hint">
           El WebSocket se conecta a la Raspy en 100.107.79.45:8765 y manda comandos ~20 Hz.
@@ -280,7 +292,7 @@
     const connText = document.getElementById("connectionText");
 
     function setupWebSocket() {
-      const host = RASPI_HOST; // si cambiás la IP de la Raspy, cambiás esto
+      const host = RASPI_HOST; // si cambiÃ¡s la IP de la Raspy, cambiÃ¡s esto
       const url = `ws://${host}:${WS_PORT}${WS_PATH}`;
 
       console.log("Conectando WebSocket a", url);
@@ -305,8 +317,8 @@
       };
 
       socket.onmessage = (event) => {
-        // Si quisieras hacer ping/pong o telemetría, podés procesarla acá.
-        // Por ahora lo dejamos vacío.
+        // Si quisieras hacer ping/pong o telemetrÃ­a, podÃ©s procesarla acÃ¡.
+        // Por ahora lo dejamos vacÃ­o.
       };
     }
 
@@ -351,6 +363,40 @@
     const brakeText = document.getElementById('brakeText');
     const throttleBar = document.getElementById('throttleBar');
     const videoFeedEl = document.getElementById('videoFeed');
+    const camStatus = document.getElementById('camStatus');
+
+    function setCamStatus(text, color = '#f5f5f5') {
+      if (camStatus) {
+        camStatus.textContent = text;
+        camStatus.style.color = color;
+      }
+    }
+
+    function attachCamDebug(el) {
+      if (!el) return;
+      const log = (msg, color = '#f5f5f5') => {
+        console.log(`[CAM] ${msg}`);
+        setCamStatus(msg, color);
+      };
+
+      el.addEventListener('loadeddata', () => log('loadeddata (recibiendo frames)', '#2ecc71'));
+      el.addEventListener('canplay', () => log('canplay (buffer OK)', '#2ecc71'));
+      el.addEventListener('playing', () => log('playing', '#2ecc71'));
+      el.addEventListener('stalled', () => log('stalled (sin datos nuevos)', '#f39c12'));
+      el.addEventListener('waiting', () => log('waiting (llenando buffer)', '#f39c12'));
+      el.addEventListener('suspend', () => log('suspend (descarga pausada)', '#f39c12'));
+      el.addEventListener('abort', () => log('abort (detenido por navegador)', '#e74c3c'));
+      el.addEventListener('error', (e) => {
+        const mediaErr = e?.target?.error;
+        const code = mediaErr?.code;
+        log(`error (code=${code ?? 'n/a'})`, '#e74c3c');
+        console.error('[CAM] video error', mediaErr || e);
+      });
+    }
+
+    attachCamDebug(videoFeedEl);
+    console.log('[CAM] seteando src', CAMERA_URL);
+    setCamStatus('Cam: conectando...');
     videoFeedEl.src = CAMERA_URL;
 
     // --- teclado ---
@@ -411,7 +457,7 @@ ear = state.gear === 1 ? 2 : 1;
       }
     });
 
-    // --- mouse para orientar cámara ---
+    // --- mouse para orientar cÃ¡mara ---
     videoContainer.addEventListener('mousemove', (e) => {
       const rect = videoContainer.getBoundingClientRect();
       const x = e.clientX - rect.left;
