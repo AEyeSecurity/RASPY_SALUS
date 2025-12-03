@@ -50,11 +50,12 @@ def apply_web_command(payload):
     brake = bool(payload.get("brake", False))
 
     try:
-        gear = int(payload.get("gear", 1))
+        gear = int(payload.get("gear", 2))
     except (TypeError, ValueError):
-        gear = 1
+        gear = 2
 
-    accel_limit = 50 if gear <= 1 else 100
+    # Para máximo torque: siempre usar el rango completo de aceleración.
+    accel_limit = 100
     accel_cmd = int(throttle * accel_limit)
     steer_cmd = int(steer_norm * 100)
     now = time.time()

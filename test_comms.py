@@ -39,7 +39,7 @@ GPIO_RELAY = int(os.environ.get("SALUS_GPIO_RELAY", "8"))
 STATUS_TIMEOUT_S = float(os.environ.get("SALUS_STATUS_TIMEOUT_S", "0.5"))
 CMD_TX_PERIOD_S = 0.010  # 10 ms
 DIRECTION_CHANGE_DELAY_S = 2.0
-ACCEL_RAMP_TIME_S = 0.25  # ramp-up/down mA?s rA?pido para pedal responsive
+ACCEL_RAMP_TIME_S = 0.05  # ramp-up/down mA?s rA?pido para pedal responsive
 
 GPIO_OFF_LIST = {GPIO_RELAY, 7, 8, 16, 24, 25}
 for token in os.environ.get("SALUS_GPIO_OFF_LIST", "").split(","):
