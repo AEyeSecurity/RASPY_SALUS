@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -31,6 +31,12 @@
       font-size: 13px;
     }
 
+    .status-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     .status-pill {
       padding: 4px 10px;
       border-radius: 999px;
@@ -39,6 +45,29 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
+    }
+
+    .toggle-send {
+      background: #1a2231;
+      border: 1px solid #2d3848;
+      color: #f5f5f5;
+      padding: 6px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    }
+
+    .toggle-send.on {
+      background: #123225;
+      border-color: #27ae60;
+      color: #d6f5e3;
+    }
+
+    .toggle-send.off {
+      background: #241416;
+      border-color: #e67e22;
+      color: #f6d1a0;
     }
 
     .status-dot {
@@ -199,16 +228,19 @@
   <div class="status-bar">
     <div class="status-pill">
       <span class="status-dot" id="connectionDot"></span>
-      <span id="connectionText">Sin conexiÃ³n</span>
+      <span id="connectionText">Sin conexión</span>
     </div>
-    <div>
-      Latencia: <span id="latencyValue">â€“</span> ms
+    <div class="status-actions">
+      <div>
+        Latencia: <span id="latencyValue">--</span> ms
+      </div>
+      <button id="sendToggle" class="toggle-send on" type="button">Enviar datos: ON</button>
     </div>
   </div>
 
   <main class="layout">
     <section id="videoContainer" class="video-container">
-      <!-- AcÃ¡ va el video WebRTC mÃ¡s adelante -->
+      <!-- Acá va el video WebRTC más adelante -->
       <video id="videoFeed" autoplay playsinline muted></video>
       <iframe id="camFrame" title="Cam stream"></iframe>
       <div id="camStatus" class="cam-status">Cam: iniciando...</div>
@@ -229,7 +261,7 @@
         </div>
 
         <div class="hud-group">
-          <div class="hud-label">DirecciÃ³n</div>
+          <div class="hud-label">Dirección</div>
           <div class="hud-value">
             <span id="steerText">0</span>
           </div>
@@ -270,7 +302,7 @@
             <span><span class="kmap-key">Shift</span> Cambio de marcha</span>
           </div>
           <div class="kmap-row">
-            <span><span class="kmap-key">Mouse</span> Orientar cÃ¡mara</span>
+            <span><span class="kmap-key">Mouse</span> Orientar cámara</span>
           </div>
         </div>
       </div>
@@ -278,7 +310,7 @@
       <div>
         <h2>Tips</h2>
         <p class="hint">
-          HacÃ© clic en la zona de video y mantenÃ© el foco para que el navegador capture las teclas.
+          Hacé clic en la zona de video y mantené el foco para que el navegador capture las teclas.
         </p>
         <p class="hint">
           El WebSocket se conecta a la Raspy en 100.107.79.45:8765 y manda comandos ~20 Hz.
@@ -294,7 +326,7 @@
     const RASPI_HOST = "100.107.79.45";
     const WS_PORT = 8765;
     const WS_PATH = "/controls";
-    // Pagina WebRTC auto-generada por MediaMTX (HTML embebido)
+    // Página WebRTC auto-generada por MediaMTX (HTML embebido)
     const CAM_EMBED_URL = "http://100.107.79.45:8889/camara";
 
     let socket = null;
@@ -302,9 +334,10 @@
     const latencySpan = document.getElementById("latencyValue");
     const dot = document.getElementById("connectionDot");
     const connText = document.getElementById("connectionText");
+    let sendEnabled = true;
 
     function setupWebSocket() {
-      const host = RASPI_HOST; // si cambiÃ¡s la IP de la Raspy, cambiÃ¡s esto
+      const host = RASPI_HOST; // si cambiás la IP de la Raspy, cambiás esto
       const url = `ws://${host}:${WS_PORT}${WS_PATH}`;
 
       console.log("Conectando WebSocket a", url);
@@ -329,12 +362,13 @@
       };
 
       socket.onmessage = (event) => {
-        // Si quisieras hacer ping/pong o telemetrÃ­a, podÃ©s procesarla acÃ¡.
-        // Por ahora lo dejamos vacÃ­o.
+        // Si quisieras hacer ping/pong o telemetría, podés procesarla acá.
+        // Por ahora lo dejamos vacío.
       };
     }
 
     function sendCommand(command) {
+      if (!sendEnabled) return;
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
       try {
         socket.send(JSON.stringify(command));
@@ -369,6 +403,7 @@
     const videoContainer = document.getElementById('videoContainer');
     const aimDot = document.getElementById('aimDot');
 
+    const sendToggleBtn = document.getElementById('sendToggle');
     const throttleText = document.getElementById('throttleText');
     const steerText = document.getElementById('steerText');
     const gearText = document.getElementById('gearText');
@@ -405,6 +440,23 @@
 
     loadCamFrame();
 
+    function updateSendToggleUI() {
+      if (!sendToggleBtn) return;
+      sendToggleBtn.textContent = sendEnabled ? 'Enviar datos: ON' : 'Enviar datos: OFF';
+      sendToggleBtn.classList.toggle('on', sendEnabled);
+      sendToggleBtn.classList.toggle('off', !sendEnabled);
+      sendToggleBtn.setAttribute('aria-pressed', String(sendEnabled));
+      sendToggleBtn.title = sendEnabled ? 'Se envían comandos al robot' : 'El envío está pausado';
+    }
+
+    if (sendToggleBtn) {
+      sendToggleBtn.addEventListener('click', () => {
+        sendEnabled = !sendEnabled;
+        updateSendToggleUI();
+      });
+      updateSendToggleUI();
+    }
+
     // --- teclado ---
     window.addEventListener('keydown', (e) => {
       if (['KeyW','KeyA','KeyS','KeyD','Space','ShiftLeft','ShiftRight'].includes(e.code)) {
@@ -430,9 +482,7 @@
         case 'ShiftLeft':
         case 'ShiftRight':
           if (!e.repeat) {
-            state.g
-
-ear = state.gear === 1 ? 2 : 1;
+            state.gear = state.gear === 1 ? 2 : 1;
           }
           keys.shift = true;
           break;
@@ -463,7 +513,7 @@ ear = state.gear === 1 ? 2 : 1;
       }
     });
 
-    // --- mouse para orientar cÃ¡mara ---
+    // --- mouse para orientar cámara ---
     videoContainer.addEventListener('mousemove', (e) => {
       const rect = videoContainer.getBoundingClientRect();
       const x = e.clientX - rect.left;
