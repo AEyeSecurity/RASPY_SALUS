@@ -31,6 +31,7 @@ _start_ts = time.time()
 _command_count = 0
 failsafe_active = False
 _resume_hits = 0
+paused_by_client = False
 
 def _clamp(value, lo, hi, default=0.0):
     try:
@@ -43,7 +44,11 @@ def apply_web_command(payload):
     """
     Convierte el JSON recibido en targets para CommsTester.
     """
-    global last_command_ts, _command_count, failsafe_active, _resume_hits
+    global last_command_ts, _command_count, failsafe_active, _resume_hits, paused_by_client
+
+    if paused_by_client:
+        # Ignora comandos mientras el cliente haya pausado el envío.
+        return
 
     throttle = _clamp(payload.get("throttle"), -1.0, 1.0, 0.0)
     steer_norm = _clamp(payload.get("steer"), -1.0, 1.0, 0.0)
@@ -106,14 +111,39 @@ def apply_web_command(payload):
         f"steer={tester.targets.steer} | brake={tester.targets.brake} | gear={gear}"
     )
 
+def set_paused(state: bool):
+    """
+    Activa/desactiva pausa solicitada por el cliente.
+    En pausa no se envía nada por UART.
+    """
+    global paused_by_client, failsafe_active, last_command_ts, _resume_hits
+    new_state = bool(state)
+    if new_state == paused_by_client:
+        return
+    paused_by_client = new_state
+    failsafe_active = False
+    _resume_hits = 0
+    last_command_ts = 0.0
+    tester.targets.accel = 0
+    tester.targets.brake = 0
+    tester.drive_enabled = False
+    if paused_by_client:
+        print("[WS] Pausa activada por cliente -> sin tráfico UART hasta reanudar")
+    else:
+        print("[WS] Pausa desactivada -> UART reanudará al llegar nuevos comandos")
+
 def tick_loop():
     """
     Mantiene vivo CommsTester.tick() (100 Hz) y aplica failsafe por inactividad.
     """
-    global running, failsafe_active
+    global running, failsafe_active, paused_by_client
 
     print("[WS-BRIDGE] Loop de tick iniciado")
     while running:
+        if paused_by_client:
+            time.sleep(0.01)
+            continue
+
         now = time.time()
         if last_command_ts and (now - last_command_ts) > INACTIVITY_BRAKE_S:
             if not failsafe_active:
@@ -169,6 +199,13 @@ async def handle_client(websocket):
 
             if not isinstance(payload, dict):
                 print(f"[WS-BRIDGE] Payload inesperado: {payload!r}")
+                continue
+
+            if payload.get("type") == "pause":
+                set_paused(bool(payload.get("value")))
+                continue
+            if "pause" in payload:
+                set_paused(bool(payload.get("pause")))
                 continue
 
             apply_web_command(payload)

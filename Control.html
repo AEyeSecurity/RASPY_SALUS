@@ -347,6 +347,7 @@
         console.log("WS conectado");
         dot.style.background = "#2ecc71";
         connText.textContent = "Conectado";
+        sendPauseState();
       };
 
       socket.onclose = () => {
@@ -365,6 +366,23 @@
         // Si quisieras hacer ping/pong o telemetría, podés procesarla acá.
         // Por ahora lo dejamos vacío.
       };
+    }
+
+
+    function sendControl(payload) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+      try {
+        socket.send(JSON.stringify(payload));
+        return true;
+      } catch (e) {
+        console.error("Error enviando control", e);
+        return false;
+      }
+    }
+
+    function sendPauseState() {
+      const pause = !sendEnabled;
+      sendControl({ type: 'pause', value: pause });
     }
 
     function sendCommand(command) {
@@ -440,6 +458,12 @@
 
     loadCamFrame();
 
+    function setSendEnabled(enabled) {
+      sendEnabled = enabled;
+      updateSendToggleUI();
+      sendPauseState();
+    }
+
     function updateSendToggleUI() {
       if (!sendToggleBtn) return;
       sendToggleBtn.textContent = sendEnabled ? 'Enviar datos: ON' : 'Enviar datos: OFF';
@@ -451,8 +475,7 @@
 
     if (sendToggleBtn) {
       sendToggleBtn.addEventListener('click', () => {
-        sendEnabled = !sendEnabled;
-        updateSendToggleUI();
+        setSendEnabled(!sendEnabled);
       });
       updateSendToggleUI();
     }
@@ -572,7 +595,9 @@
       };
 
       renderHud(command);
-      sendCommand(command);
+      if (sendEnabled) {
+        sendCommand(command);
+      }
     }
 
     function renderHud(cmd) {
