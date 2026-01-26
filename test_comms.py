@@ -35,7 +35,9 @@ except ImportError:  # pragma: no cover - hardware specific
 SERIAL_PORT = os.environ.get("SALUS_SERIAL_PORT", "/dev/serial0")
 BAUDRATE = int(os.environ.get("SALUS_BAUDRATE", "460800"))
 TIMEOUT_S = float(os.environ.get("SALUS_TIMEOUT_S", "0.001"))
-GPIO_REVERSA = int(os.environ.get("SALUS_GPIO_REVERSA", os.environ.get("SALUS_GPIO_RELAY", "26")))
+# GPIO_REVERSA controla la reversa. Un futuro GPIO_RELAY (relé general)
+# será un pin distinto y no está configurado aquí.
+GPIO_REVERSA = int(os.environ.get("GPIO_REVERSA", os.environ.get("SALUS_GPIO_REVERSA", "26")))
 STATUS_TIMEOUT_S = float(os.environ.get("SALUS_STATUS_TIMEOUT_S", "0.5"))
 CMD_TX_PERIOD_S = 0.010  # 10 ms
 DIRECTION_CHANGE_DELAY_S = 2.0
