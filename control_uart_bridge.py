@@ -201,6 +201,7 @@ async def handle_client(websocket):
                 print(f"[WS-BRIDGE] Payload inesperado: {payload!r}")
                 continue
 
+
             if payload.get("type") == "pause":
                 set_paused(bool(payload.get("value")))
                 continue

@@ -35,13 +35,13 @@ except ImportError:  # pragma: no cover - hardware specific
 SERIAL_PORT = os.environ.get("SALUS_SERIAL_PORT", "/dev/serial0")
 BAUDRATE = int(os.environ.get("SALUS_BAUDRATE", "460800"))
 TIMEOUT_S = float(os.environ.get("SALUS_TIMEOUT_S", "0.001"))
-GPIO_RELAY = int(os.environ.get("SALUS_GPIO_RELAY", "8"))
+GPIO_REVERSA = int(os.environ.get("SALUS_GPIO_REVERSA", os.environ.get("SALUS_GPIO_RELAY", "26")))
 STATUS_TIMEOUT_S = float(os.environ.get("SALUS_STATUS_TIMEOUT_S", "0.5"))
 CMD_TX_PERIOD_S = 0.010  # 10 ms
 DIRECTION_CHANGE_DELAY_S = 2.0
 ACCEL_RAMP_TIME_S = 0.05  # ramp-up/down mA?s rA?pido para pedal responsive
 
-GPIO_OFF_LIST = {GPIO_RELAY, 7, 8, 16, 24, 25}
+GPIO_OFF_LIST = {GPIO_REVERSA, 7, 8, 16, 24, 25}
 for token in os.environ.get("SALUS_GPIO_OFF_LIST", "").split(","):
     token = token.strip()
     if not token:
@@ -207,10 +207,10 @@ class CommsTester:
         if on != self.relay_state:
             self.relay_state = on
             try:
-                GPIO.output(GPIO_RELAY, GPIO.HIGH if on else GPIO.LOW)
+                GPIO.output(GPIO_REVERSA, GPIO.HIGH if on else GPIO.LOW)
             except AttributeError:
                 # MockGPIO prints actions
-                GPIO.output(GPIO_RELAY, GPIO.HIGH if on else GPIO.LOW)
+                GPIO.output(GPIO_REVERSA, GPIO.HIGH if on else GPIO.LOW)
 
     def _handle_negative_accel_reverse(self):
         # Reversa ahora se habilita respondiendo a REVERSE_REQ de la ESP32.

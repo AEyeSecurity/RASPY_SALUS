@@ -313,7 +313,7 @@
           Hacé clic en la zona de video y mantené el foco para que el navegador capture las teclas.
         </p>
         <p class="hint">
-          El WebSocket se conecta a la Raspy en 100.107.79.45:8765 y manda comandos ~20 Hz.
+          El WebSocket se conecta a la Raspy en <span id="wsHint"></span> y manda comandos ~20 Hz.
         </p>
       </div>
     </aside>
@@ -323,17 +323,26 @@
     // =========================
     //  WebSocket a la Raspy
     // =========================
+    // =========================
+    //  Config (edita solo estas vars)
+    // =========================
     const RASPI_HOST = "100.107.79.45";
     const WS_PORT = 8765;
     const WS_PATH = "/controls";
+    const CAM_HTTP_PORT = 8889;
+    const CAM_PATH = "/camara";
+    // =========================
+    //  URLs derivadas
+    // =========================
     // Página WebRTC auto-generada por MediaMTX (HTML embebido)
-    const CAM_EMBED_URL = "http://100.107.79.45:8889/camara";
+    const CAM_EMBED_URL = `http://${RASPI_HOST}:${CAM_HTTP_PORT}${CAM_PATH}`;
 
     let socket = null;
     let lastPingSent = 0;
     const latencySpan = document.getElementById("latencyValue");
     const dot = document.getElementById("connectionDot");
     const connText = document.getElementById("connectionText");
+    const wsHint = document.getElementById("wsHint");
     let sendEnabled = true;
 
     function setupWebSocket() {
@@ -393,6 +402,10 @@
       } catch (e) {
         console.error("Error enviando comando", e);
       }
+    }
+
+    if (wsHint) {
+      wsHint.textContent = `${RASPI_HOST}:${WS_PORT}`;
     }
 
     setupWebSocket();
