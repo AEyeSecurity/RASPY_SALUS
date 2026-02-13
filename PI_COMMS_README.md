@@ -59,29 +59,32 @@ Implementación de CRC: `crc8_maxim` en `src/pi_comms.cpp`.
 
 ## 4. Flujo de control
 
-### 4.1 Aceleración positiva (0..100)
+### 4.1 Tracción y freno (frame fresco <=120 ms)
 
-- El bit `DRIVE_EN` debe estar en 1.  
-- `accel_i8` se mapea directamente a `accelEffective` y alimenta al cálculo de PWM (`quadThrottleUpdate`).  
-- `brake_u8` (0..100) se traduce en `quadBrakeApplyPercent`: 0 % mantiene los servos en la posición de liberado y 100 % corresponde al ángulo de freno total definido en `QuadBrakeConfig`.  
-- Cuando la Pi está comandando, `taskQuadDriveControl` ignora el valor de freno derivado del RC y solo respeta el porcentaje solicitado por `brake_u8`.
+- Si `ESTOP=1`, `taskQuadDriveControl` inhibe acelerador (`cmd=0`, duty mínimo) y fuerza `brake=100%`.
+- Si `ESTOP=0` y `DRIVE_EN=1`, usa `accelEffective` como comando de tracción.
+- Si `ESTOP=0` y `DRIVE_EN=0`, la tracción queda en RC (no en Pi).
+- Cuando el frame de Pi está fresco, el freno siempre se toma de `brake_u8` (0..100) vía `quadBrakeApplyPercent`.
 
 ### 4.2 Reversa segura
 
-1. La Pi envía `accel_i8 < 0` para solicitar reversa.  
-2. El ESP32 levanta el flag `REVERSE_REQ` en su `status_flags` y bloquea `accelEffective` (queda en 0).  
-3. Cuando la Pi activa físicamente el relé y responde con `ALLOW_REVERSE=1`, la ESP32 habilita el valor negativo real.  
-4. Si `ALLOW_REVERSE` vuelve a 0 o pasan >120 ms sin paquetes, `accelEffective` se fuerza a 0 y se aplica freno.
+1. La Pi envía `accel_i8 < 0`.
+2. En RX, la ESP32 calcula `reverseRequestActive = wantsReverse && !allowReverse`.
+3. En TX, el bit `REVERSE_REQ` se refleja desde `reverseRequestActive`.
+4. Solo cuando llega `ALLOW_REVERSE=1`, `accelEffective` habilita el valor negativo real.
+5. Si `ALLOW_REVERSE=0` y `accel_i8` sigue negativo, `accelEffective` se mantiene en `0`.
 
-### 4.3 ESTOP y failsafe
+### 4.3 ESTOP y timeout de enlace
 
-- `ESTOP` (bit 0) provoca freno inmediato y duty mínimo, ignorando cualquier otro comando. Mientras `ESTOP` permanezca activo se fuerza `brake_u8 = 100%` aunque la Pi envíe otro valor.  
-- Si no llegan frames válidos en ~120 ms, `PiUartRx` marca el snapshot como viejo; `taskQuadDriveControl` cae a control RC con freno al 100 %.
+- `ESTOP` aplica freno inmediato y corta tracción mientras el frame esté fresco.
+- Si el frame deja de estar fresco (>120 ms), `taskQuadDriveControl` y `taskPidControl` vuelven a RC.
+- En `pi_comms` no hay una rutina de timeout que fuerce globalmente `brake=100`.
 
-### 4.4 Dirección y freno
+### 4.4 Dirección
 
-- `steer_i8` todavía no se usa directamente; el PID continúa leyendo el receptor RC.  
-- `brake_u8` (0..100) controla los servos mediante `quadBrakeApplyPercent`. Cuando no hay datos frescos de la Pi el proyecto vuelve a su modo original (freno automático derivado del throttle filtrado del RC).
+- `steer_i8` sí se usa: `taskPidControl` toma `piSnapshot.steer` cuando Pi está fresca.
+- Si el frame envejece (>120 ms), vuelve a dirección RC.
+- El uso de `steer_i8` no depende de `DRIVE_EN` ni de `ESTOP`.
 
 ---
 
@@ -106,7 +109,7 @@ Recomendado: activar `debug::kLogDrive` temporalmente para ver qué comandos ter
    - En Telnet ejecutar `comms.status` → debería mostrar `driver=READY` y `ageMs` estable.  
    - Mover `accel_i8` positivo con `DRIVE_EN=1`; comprobar logs `[PI][RX]` y `[DRIVE]`.  
    - Solicitar reversa (`accel<0`). Confirmar que aparece `reverse{req=Y wait=Y}` y que al activar el relé (`ALLOW_REVERSE`) cambia a `granted=Y`.  
-5. **Probar ESTOP**: setear `ESTOP=1` y validar que `cmd=-100`, `brake=100` y `PiUartTx` quita `REVERSE_REQ`.  
+5. **Probar ESTOP**: setear `ESTOP=1` y validar que `cmd=0`, `brake=100` y duty en mínimo.  
 6. **Integrar en el vehículo** una vez que no existan CRC errors y los tiempos (`ageMs`) se mantengan <50 ms.
 
 ---

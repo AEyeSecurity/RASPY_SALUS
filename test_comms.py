@@ -183,6 +183,7 @@ class CommsTester:
         self.last_status_ts = 0.0
         self._ramp_value = 0.0
         self._last_ramp_update = time.time()
+        self._estop_reason = None  # "manual" | "fault" | "overcurrent" | "status_timeout"
 
         # Garantizamos que el rele arranque apagado (GPIO bajo).
         self._update_relay_output(False)
@@ -193,6 +194,33 @@ class CommsTester:
         self._last_accel_sign = 1 if self.targets.accel > 0 else (-1 if self.targets.accel < 0 else 0)
 
         print("UART iniciado en", SERIAL_PORT, BAUDRATE, "baudios")
+
+    def set_estop(self, enabled: bool, reason: str = "manual"):
+        if enabled:
+            if not self.estop:
+                self.estop = True
+                self._estop_reason = reason
+            elif self._estop_reason is None:
+                self._estop_reason = reason
+        else:
+            if self.estop:
+                self.estop = False
+            self._estop_reason = None
+
+    def _trigger_estop(self, reason: str):
+        self.set_estop(True, reason=reason)
+
+    def _maybe_clear_estop(self):
+        if not self.estop:
+            return
+        if self._estop_reason in ("fault", "overcurrent"):
+            if not self.status.fault and not self.status.overcurrent:
+                print("[STATUS] Fault/overcurrent limpio -> liberando E-Stop")
+                self.set_estop(False)
+        elif self._estop_reason == "status_timeout":
+            if not self.status.fault and not self.status.overcurrent:
+                print("[STATUS] Estado reanudado -> liberando E-Stop")
+                self.set_estop(False)
 
     def _build_flags(self, drive_enabled=None):
         flags = 0
@@ -331,14 +359,14 @@ class CommsTester:
 
         if self.status.fault and not prev_status.fault:
             print("[STATUS] FAULT reportado -> enviando E-Stop preventivo")
-            self.estop = True
+            self._trigger_estop("fault")
             self.drive_enabled = False
         elif not self.status.fault and prev_status.fault:
             print("[STATUS] FAULT limpiado por ESP32")
 
         if self.status.overcurrent and not prev_status.overcurrent:
             print("[STATUS] OVERCURRENT -> aplicando freno")
-            self.estop = True
+            self._trigger_estop("overcurrent")
             self.targets.accel = 0
             self.targets.brake = 100
         elif not self.status.overcurrent and prev_status.overcurrent:
@@ -351,6 +379,7 @@ class CommsTester:
             print(f"[STATUS] telemetry={self.status.telemetry}")
 
         self._apply_reverse_policy()
+        self._maybe_clear_estop()
 
     def tick(self):
         now = time.time()
@@ -513,7 +542,7 @@ class CommsTester:
             self.allow_reverse = False
             self.allow_reverse_manual = False
             self.auto_grant_reverse = True
-            self.estop = True
+            self._trigger_estop("status_timeout")
             self.targets.accel = 0
             self.targets.brake = 100
             self._update_relay_output(False)
@@ -626,7 +655,7 @@ def interactive_menu():
                     tester._update_relay_output(tester.allow_reverse)
                     print("Allow reverse MANUAL ->", tester.allow_reverse)
             elif choice == "6":
-                tester.estop = not tester.estop
+                tester.set_estop(not tester.estop, reason="manual")
                 print("E-Stop ->", tester.estop)
             elif choice == "7":
                 if tester.loop_running():
