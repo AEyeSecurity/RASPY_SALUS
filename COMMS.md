@@ -37,7 +37,7 @@ Flags en `ver_flags` (nibble bajo):
 
 - Byte 0: `0x55`
 - Byte 1: `status_flags`
-- Byte 2: `telemetry_u8`
+- Byte 2: `telemetry_u8` (velocidad)
 - Byte 3: `crc8` (CRC-8 Dallas/Maxim sobre bytes 0..2)
 
 Status bits:
@@ -46,6 +46,11 @@ Status bits:
 - Bit 1: `FAULT`
 - Bit 2: `OVERCURRENT`
 - Bit 3: `REVERSE_REQ`
+
+Semantica de `telemetry_u8`:
+
+- `0..254`: velocidad actual en `km/h`
+- `255`: `N/A` (sin velocidad valida disponible)
 
 ## 3. Comportamiento RX real (`taskPiCommsRx`)
 
@@ -71,7 +76,13 @@ Campos derivados que calcula RX:
   - `READY` queda forzado en `piCommsSetStatusFlags`.
   - `REVERSE_REQ` no se setea manualmente: se calcula desde RX
     (`g_reverseRequestActive`) en cada envio.
-- `telemetry` por defecto inicia en `255` (`N/A`).
+- `telemetry` por defecto inicia en `255` (`N/A`) y en ese modo se calcula
+  automaticamente desde `speed_meter`:
+  - `0..254` cuando hay `SpeedMeterSnapshot` valido.
+  - `255` si `driverReady=false`, `hasFrame=false`, `speedKmh<0` o el ultimo
+    frame tiene edad `>500 ms`.
+- Override manual opcional: si se llama `piCommsSetTelemetry(x)` con `x!=255`,
+  TX usa ese valor fijo y no la velocidad.
 
 ## 5. Como se usan los datos en control (importante)
 

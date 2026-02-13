@@ -3,6 +3,7 @@ import time
 import threading
 import serial
 from dataclasses import dataclass
+from typing import Optional
 
 try:
     import RPi.GPIO as GPIO
@@ -128,6 +129,12 @@ def parse_status_packet(packet):
     return status_flags, telemetry
 
 
+def decode_speed_kmh(telemetry: int) -> Optional[int]:
+    if telemetry == 255:
+        return None
+    return telemetry
+
+
 @dataclass
 class TargetState:
     steer: int = 0
@@ -142,6 +149,7 @@ class Esp32Status:
     overcurrent: bool = False
     reverse_req: bool = False
     telemetry: int = 0
+    speed_kmh: Optional[int] = None
     last_packet_ts: float = 0.0
     packets_ok: int = 0
     crc_errors: int = 0
@@ -338,6 +346,7 @@ class CommsTester:
             overcurrent=self.status.overcurrent,
             reverse_req=self.status.reverse_req,
             telemetry=self.status.telemetry,
+            speed_kmh=self.status.speed_kmh,
             last_packet_ts=self.status.last_packet_ts,
             packets_ok=self.status.packets_ok,
             crc_errors=self.status.crc_errors,
@@ -348,6 +357,7 @@ class CommsTester:
         self.status.overcurrent = bool(status_flags & STAT_OVERCURRENT)
         self.status.reverse_req = bool(status_flags & STAT_REVERSE_REQ)
         self.status.telemetry = telemetry
+        self.status.speed_kmh = decode_speed_kmh(telemetry)
         self.status.last_packet_ts = now
         self.status.packets_ok += 1
         self.status_timeout_logged = False
@@ -376,7 +386,8 @@ class CommsTester:
             print(f"[STATUS] REVERSE_REQ -> {self.status.reverse_req}")
 
         if self.status.telemetry != prev_status.telemetry:
-            print(f"[STATUS] telemetry={self.status.telemetry}")
+            speed_desc = "N/A" if self.status.speed_kmh is None else f"{self.status.speed_kmh}km/h"
+            print(f"[STATUS] telemetry={self.status.telemetry} speed={speed_desc}")
 
         self._apply_reverse_policy()
         self._maybe_clear_estop()
@@ -584,7 +595,8 @@ class CommsTester:
             f"Targets(steer={self.targets.steer}, "
             f"accel={self.targets.accel}, brake={self.targets.brake}), "
             f"ESP32(status={'+'.join(status_bits)}, "
-            f"telemetry={self.status.telemetry}, age={age_desc}, "
+            f"telemetry={self.status.telemetry}, "
+            f"speed_kmh={self.status.speed_kmh}, age={age_desc}, "
             f"rx_ok={self.status.packets_ok}, crc_err={self.status.crc_errors}, "
             f"tx={self.tx_count})"
         )

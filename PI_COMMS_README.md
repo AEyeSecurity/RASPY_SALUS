@@ -24,7 +24,7 @@ El proyecto crea dos tareas FreeRTOS dedicadas al enlace:
 | Tarea        | Archivo          | Frecuencia | Rol principal                                     |
 |--------------|------------------|------------|---------------------------------------------------|
 | `PiUartRx`   | `src/pi_comms.cpp` | ~1 kHz     | Deserializa frames `0xAA`, valida CRC‑8 y publica un snapshot seguro (`PiCommsRxSnapshot`). |
-| `PiUartTx`   | `src/pi_comms.cpp` | 100 Hz     | Envía frames `0x55` con los `status_flags` y `telemetry_u8`. |
+| `PiUartTx`   | `src/pi_comms.cpp` | 100 Hz     | Envía frames `0x55` con `status_flags` y `telemetry_u8` (velocidad km/h codificada). |
 
 - Se configuran mediante `PiCommsConfig` en `src/main.cpp`.  
 - El logging detallado se activa con `debug::kLogPiComms`.
@@ -49,9 +49,19 @@ El proyecto crea dos tareas FreeRTOS dedicadas al enlace:
 ```
 0: 0x55
 1: status_flags (READY/FAULT/OVERCURRENT/REVERSE_REQ)
-2: telemetry_u8 (0-100 = %, 101..103 eventos, 255 N/A)
+2: telemetry_u8 (0..254 = km/h, 255 = N/A)
 3: CRC-8 Dallas/Maxim (bytes 0-2)
 ```
+
+`telemetry_u8` se genera automaticamente desde `speed_meter` cuando
+`g_txState.telemetry == 255`:
+
+- usa `speedKmh` si el snapshot es valido y su edad es `<=500 ms`;
+- envia `255` si no hay dato valido (`driverReady=false`, `hasFrame=false`,
+  `speedKmh<0` o frame stale).
+
+Si `piCommsSetTelemetry(x)` recibe `x != 255`, ese valor manual tiene prioridad
+sobre la codificacion de velocidad.
 
 Implementación de CRC: `crc8_maxim` en `src/pi_comms.cpp`.
 
